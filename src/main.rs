@@ -1,12 +1,16 @@
 use core::fmt;
-use std::{net::{IpAddr}, thread, time::Duration, process::Command};
+use std::{net::{IpAddr}, thread, time::Duration, process::Command, path::{self, Path}};
 
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*, primitives::{PrimitiveStyleBuilder, Circle, PrimitiveStyle, Sector}};
 use embedded_graphics_core::primitives::Rectangle;
 use embedded_graphics_simulator::{BinaryColorTheme, SimulatorDisplay, Window, OutputSettingsBuilder};
+use linux_embedded_hal::I2cdev;
+use ssd1306::{I2CDisplayInterface, Ssd1306, size::{DisplaySize128x64, DisplaySize}, rotation::DisplayRotation, prelude::{DisplayConfig, I2CInterface}, mode::BufferedGraphicsMode};
 use u8g2_fonts::{fonts, FontRenderer, types::{HorizontalAlignment, VerticalPosition, FontColor}};
 
 use local_ip_address::local_ip;
+
+use configparser::ini::Ini;
 
 use device_query::{DeviceQuery, DeviceState, Keycode, device_state};
 
@@ -137,8 +141,19 @@ fn handle_error<T,E>(result: Result<T, E>, display: &mut SimulatorDisplay<Binary
 
 
 fn main() -> Result<(), core::convert::Infallible> {
+    let i2c = I2cdev::new::<&Path>(Path::new("/dev/i2c-0").as_ref()).unwrap();
+    let interface = I2CDisplayInterface::new(i2c);
 
-    let mut display = SimulatorDisplay::<BinaryColor>::new(Size::new(128, 64));
+    let mut config = Ini::new();
+    config.load("config.ini").unwrap();
+    let current_user: User = User::new(config.get("config", "device_name").unwrap().as_str()).unwrap();
+    let target_user_1: User = User::new(config.get("config", "target_1").unwrap().as_str()).unwrap();
+    let target_user_2: User = User::new(config.get("config", "target_2").unwrap().as_str()).unwrap();
+
+    //let mut display = SimulatorDisplay::<BinaryColor>::new(Size::new(128, 64));
+    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
+    display.init().unwrap();
 
     let font1 = FontRenderer::new::<fonts::u8g2_font_inr24_mr>();
     let font1_small = FontRenderer::new::<fonts::u8g2_font_inb16_mr>();
@@ -152,15 +167,10 @@ fn main() -> Result<(), core::convert::Infallible> {
     let device_state = DeviceState::new();
 
     boot_screen(&mut display, &font1_small, &font2);
-    window.update(&mut display);
+    display.flush().unwrap();
 
-    //thread::sleep(Duration::from_secs(3));
+    thread::sleep(Duration::from_secs(3));
     display.clear(BinaryColor::Off).unwrap();
-
-
-
-    let text = "CAM 2";
-    let target_user_1: User = User::new(text).unwrap(); 
 
     let local_ip_addr = local_ip().unwrap();
 
@@ -178,23 +188,20 @@ fn main() -> Result<(), core::convert::Infallible> {
     name_display(&mut display, &font1, &font2, &target_user_1, false);
 
     ip_display(&mut display, &font2, local_ip_addr);
-    window.update(&mut display);
+    display.flush().unwrap();
 
 
     let mut counter = 0;
     let mut secs: u8 = 0;
-
-    let target_user_2: User = User::new("STAGE").unwrap();
-    let current_user: User = User::new("ROBSON").unwrap();
-
 
     loop {
         let keys: Vec<Keycode> = device_state.get_keys();
 
         if keys.contains(&Keycode::Escape) {
             power_display(&mut display, &secs.into(), 9f32); 
-            window.update(&mut display);
+            display.flush().unwrap();
             if secs >= 10 {
+
                 break
             }
             secs += 1;
@@ -208,13 +215,13 @@ fn main() -> Result<(), core::convert::Infallible> {
         }
         if keys.contains(&Keycode::Left) {
             name_display(&mut display, &font1, &font2, &target_user_1, true);
-            window.update(&mut display);
+            display.flush().unwrap();
         } else if keys.contains(&Keycode::Right) {
             name_display(&mut display, &font1, &font2, &target_user_2, true);
-            window.update(&mut display);
+            display.flush().unwrap();
         } else {
             name_display(&mut display, &font1, &font2, &current_user, false);
-            window.update(&mut display);
+            display.flush().unwrap();
         }
 
 
@@ -230,8 +237,8 @@ fn main() -> Result<(), core::convert::Infallible> {
             signal_display(&mut display, &font2, percent);
             let local_ip_addr = local_ip().unwrap();
             ip_display(&mut display, &font2, local_ip_addr);
-            window.update(&mut display);
 
+            display.flush().unwrap();
             counter = 0;
         }
 
@@ -243,7 +250,7 @@ fn main() -> Result<(), core::convert::Infallible> {
     Ok(())
 }
 
-fn boot_screen(display: &mut SimulatorDisplay<BinaryColor>, font1_small: &FontRenderer, font2: &FontRenderer) {
+fn boot_screen(display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, font1_small: &FontRenderer, font2: &FontRenderer) {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
 
     font1_small.render_aligned(
@@ -267,7 +274,7 @@ fn boot_screen(display: &mut SimulatorDisplay<BinaryColor>, font1_small: &FontRe
         .unwrap();
 }
 
-fn name_display(display: &mut SimulatorDisplay<BinaryColor>, font1: &FontRenderer, font2: &FontRenderer, user: &User, talking: bool) {
+fn name_display(display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, font1: &FontRenderer, font2: &FontRenderer, user: &User, talking: bool) {
 
     let clear = PrimitiveStyleBuilder::new()
         .stroke_color(BinaryColor::Off)
@@ -305,7 +312,7 @@ fn name_display(display: &mut SimulatorDisplay<BinaryColor>, font1: &FontRendere
     } 
 } 
 
-fn signal_display(display: &mut SimulatorDisplay<BinaryColor>, font2: &FontRenderer, percent: Percent) {
+fn signal_display(display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, font2: &FontRenderer, percent: Percent) {
     let clear = PrimitiveStyleBuilder::new()
         .stroke_color(BinaryColor::Off)
         .fill_color(BinaryColor::Off)
@@ -326,7 +333,7 @@ fn signal_display(display: &mut SimulatorDisplay<BinaryColor>, font2: &FontRende
         ).unwrap();
 }
 
-fn ip_display(display: &mut SimulatorDisplay<BinaryColor>, font2: &FontRenderer, ip: IpAddr) {
+fn ip_display(display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, font2: &FontRenderer, ip: IpAddr) {
     let clear = PrimitiveStyleBuilder::new()
         .stroke_color(BinaryColor::Off)
         .fill_color(BinaryColor::Off)
@@ -348,7 +355,7 @@ fn ip_display(display: &mut SimulatorDisplay<BinaryColor>, font2: &FontRenderer,
         .unwrap();
 }
 
-fn power_display(display: &mut SimulatorDisplay<BinaryColor>, currenta: &f32, maxa: f32) {
+fn power_display(display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, currenta: &f32, maxa: f32) {
     display.clear(BinaryColor::Off).unwrap();
     let current = currenta + 1f32;
     let max = maxa + 1f32;
@@ -362,7 +369,7 @@ fn power_display(display: &mut SimulatorDisplay<BinaryColor>, currenta: &f32, ma
 }
 
 
-fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_small: &FontRenderer, font2: &FontRenderer) -> (Button, Button, Button) {
+fn test(window: &mut Window, display: &mut Ssd1306<I2CInterface<I2cdev>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>, font1_small: &FontRenderer, font2: &FontRenderer) -> (Button, Button, Button) {
     display.clear(BinaryColor::Off).unwrap();
     let mut power = Button::Unknown;
     let mut ptt1 = Button::Unknown;
@@ -376,7 +383,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
         FontColor::Transparent(BinaryColor::On),
         &mut *display,
         ).unwrap();
-    window.update(&mut *display);
+    display.flush().unwrap();
     thread::sleep(Duration::from_secs(1));
     let device_state = DeviceState::new(); 
     display.clear(BinaryColor::Off).unwrap();
@@ -388,7 +395,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
         FontColor::Transparent(BinaryColor::On),
         &mut *display,
         ).unwrap();
-    window.update(&mut *display);
+    display.flush().unwrap();
     loop {
         let keys: Vec<Keycode> = device_state.get_keys();
 
@@ -423,7 +430,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
         FontColor::Transparent(BinaryColor::On),
         &mut *display,
         ).unwrap();
-    window.update(&mut *display);
+    display.flush().unwrap();
     loop {
         let keys: Vec<Keycode> = device_state.get_keys();
 
@@ -457,7 +464,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
         FontColor::Transparent(BinaryColor::On),
         &mut *display,
         ).unwrap();
-    window.update(&mut *display);
+    display.flush().unwrap();
     loop {
         let keys: Vec<Keycode> = device_state.get_keys();
 
@@ -491,7 +498,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
             FontColor::Transparent(BinaryColor::On),
             &mut *display,
             ).unwrap();
-        window.update(&mut *display);
+        display.flush().unwrap();
         thread::sleep(Duration::from_secs(1));
     } else {
         display.clear(BinaryColor::Off).unwrap();
@@ -503,7 +510,7 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
             FontColor::Transparent(BinaryColor::On),
             &mut *display,
             ).unwrap();
-        window.update(&mut *display);
+        display.flush().unwrap();
         thread::sleep(Duration::from_secs_f32(0.5));
 
         display.clear(BinaryColor::Off).unwrap();
@@ -515,10 +522,10 @@ fn test(window: &mut Window, display: &mut SimulatorDisplay<BinaryColor>, font1_
             FontColor::Transparent(BinaryColor::On),
             &mut *display,
             ).unwrap();
-        window.update(&mut *display);
+        display.flush().unwrap();
         thread::sleep(Duration::from_secs(2));
         display.clear(BinaryColor::Off).unwrap();
-        window.update(&mut *display);
+        display.flush().unwrap();
     }
     (power,ptt1,ptt2)
 }
