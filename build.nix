@@ -1,5 +1,6 @@
 let
     pkgs = import <nixpkgs> {};
+
 in
 pkgs.mkShell{
     name = "beltpacks";
@@ -10,5 +11,9 @@ pkgs.mkShell{
         SDL2
         iw
         pkg-config
+        gcc
+        zlib
+        xorg.libX11
     ];
+
 }
