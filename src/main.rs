@@ -42,10 +42,10 @@ enum Button {
 impl fmt::Display for Button {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Button::Power => write!(f, "Power"),
-            Button::Ptt1 => write!(f, "PTT1"),
-            Button::Ptt2 => write!(f, "PTT2"),
-            Button::Unknown => write!(f, "No Signal"),
+            Self::Power => write!(f, "Power"),
+            Self::Ptt1 => write!(f, "PTT1"),
+            Self::Ptt2 => write!(f, "PTT2"),
+            Self::Unknown => write!(f, "No Signal"),
         }
     }
 }
@@ -56,7 +56,7 @@ struct User(String);
 impl User {
     fn new(value: &str) -> Result<Self, String> {
         if value.len() <= 6 && value.chars().all(|c| c.is_ascii()) {
-            Ok(User(value.to_string()))
+            Ok(Self(value.to_string()))
         } else {
             Err("Invalid Input".to_string())
         }
@@ -76,7 +76,7 @@ impl Percent {
     fn new(value: &str) -> Result<Self, String> {
         let new_value: u8 = value.parse().unwrap();
         if new_value <= 100 {
-            Ok(Percent(new_value.into()))
+            Ok(Self(new_value.into()))
         } else {
             Err("Invalid Input".to_string())
         }
@@ -97,7 +97,7 @@ impl Error {
         if value.len() == 4 {
             let modified = value[..2].to_owned() + &value[3..];
             if modified.chars().all(|c| c.is_digit(6)) {
-                Ok(Error(u8::from_str_radix(modified.as_str(), 6).unwrap()))
+                Ok(Self(u8::from_str_radix(modified.as_str(), 6).unwrap()))
             } else {
                 Err("Invalid input".to_string())
             }
@@ -123,7 +123,7 @@ impl fmt::Display for Error {
         }
         let mut v: String = result.into_iter().rev().collect();
         v.truncate(2);
-        return write!(f, "{}", v);
+        return write!(f, "{v}");
     }
 }
 
@@ -168,7 +168,7 @@ fn handle_error<T, E>(
     }
 }
 
-fn main() -> Result<(), core::convert::Infallible> {
+fn main() {
     let i2c = I2cdev::new::<&Path>(Path::new("/dev/i2c-0").as_ref()).unwrap();
     let interface = I2CDisplayInterface::new(i2c);
 
@@ -192,9 +192,17 @@ fn main() -> Result<(), core::convert::Infallible> {
 
     // TODO: Please change these to use the correct GPIO lines
     let mut gpiochip = Chip::new("/dev/gpiochip0").unwrap();
-    let power_gpio = gpiochip.get_line(17).unwrap();
-    let ptt1_gpio = gpiochip.get_line(18).unwrap();
-    let ptt2_gpio = gpiochip.get_line(19).unwrap();
+    let power_out_gpio = gpiochip.get_line(10).unwrap();
+    power_out_gpio
+        .request(LineRequestFlags::OUTPUT, 1, "my-gpio")
+        .unwrap();
+    let power_gpio = gpiochip.get_line(20).unwrap();
+    let ptt_out_gpio = gpiochip.get_line(198).unwrap();
+    ptt_out_gpio
+        .request(LineRequestFlags::OUTPUT, 1, "my-gpio")
+        .unwrap();
+    let ptt1_gpio = gpiochip.get_line(201).unwrap();
+    let ptt2_gpio = gpiochip.get_line(199).unwrap();
 
     let power_handle = power_gpio
         .request(LineRequestFlags::INPUT, 1, "my-gpio")
@@ -222,7 +230,7 @@ fn main() -> Result<(), core::convert::Infallible> {
 
     let percent: Percent = Percent::new(String::from_utf8_lossy(&p.stdout).trim_end()).unwrap();
 
-    signal_display(&mut display, &font2, percent);
+    signal_display(&mut display, &font2, &percent);
 
     name_display(&mut display, &font1, &font2, &target_user_1, false);
 
@@ -234,7 +242,7 @@ fn main() -> Result<(), core::convert::Infallible> {
 
     loop {
         if power_handle.get_value().unwrap() == 1 {
-            power_display(&mut display, &secs.into(), 9f32);
+            power_display(&mut display, secs.into(), 9f32);
             display.flush().unwrap();
             if secs >= 10 {
                 break;
@@ -249,14 +257,12 @@ fn main() -> Result<(), core::convert::Infallible> {
         }
         if ptt1_handle.get_value().unwrap() == 1 {
             name_display(&mut display, &font1, &font2, &target_user_1, true);
-            display.flush().unwrap();
         } else if ptt2_handle.get_value().unwrap() == 1 {
             name_display(&mut display, &font1, &font2, &target_user_2, true);
-            display.flush().unwrap();
         } else {
             name_display(&mut display, &font1, &font2, &current_user, false);
-            display.flush().unwrap();
         }
+        display.flush().unwrap();
 
         if counter == 10 || secs != 0 {
             let p = Command::new("sh")
@@ -268,7 +274,7 @@ fn main() -> Result<(), core::convert::Infallible> {
             let percent: Percent =
                 Percent::new(String::from_utf8_lossy(&p.stdout).trim_end()).unwrap();
 
-            signal_display(&mut display, &font2, percent);
+            signal_display(&mut display, &font2, &percent);
             let local_ip_addr = local_ip().unwrap();
             ip_display(&mut display, &font2, local_ip_addr);
 
@@ -280,7 +286,6 @@ fn main() -> Result<(), core::convert::Infallible> {
 
         thread::sleep(Duration::from_millis(100));
     }
-    Ok(())
 }
 
 fn boot_screen(
@@ -375,7 +380,7 @@ fn signal_display(
         BufferedGraphicsMode<DisplaySize128x64>,
     >,
     font2: &FontRenderer,
-    percent: Percent,
+    percent: &Percent,
 ) {
     let clear = PrimitiveStyleBuilder::new()
         .stroke_color(BinaryColor::Off)
@@ -436,7 +441,7 @@ fn power_display(
         DisplaySize128x64,
         BufferedGraphicsMode<DisplaySize128x64>,
     >,
-    currenta: &f32,
+    currenta: f32,
     maxa: f32,
 ) {
     display.clear(BinaryColor::Off).unwrap();
